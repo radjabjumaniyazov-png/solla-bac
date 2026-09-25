@@ -75,3 +75,100 @@ class UsernameChange(BaseModel):
 class ProfileUpdate(BaseModel):
     display_name: str | None = None
     avatar_url: str | None = None
+
+
+# ---------- Группы ----------
+
+class GroupCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=128)
+    member_usernames: list[str] = Field(default_factory=list)
+
+
+class GroupMemberOut(BaseModel):
+    user: UserOut
+    role: str
+
+    class Config:
+        from_attributes = True
+
+
+class GroupOut(BaseModel):
+    id: int
+    title: str
+    owner_id: int
+    created_at: datetime
+    members: list[GroupMemberOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+# ---------- Каналы ----------
+
+class ChannelCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=128)
+    username: str | None = Field(default=None, min_length=5, max_length=32)
+    description: str | None = None
+
+    @field_validator("username")
+    @classmethod
+    def username_format(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.lstrip("@")
+        if not USERNAME_RE.match(v):
+            raise ValueError(
+                "Юзернейм канала: 5-32 символа, только латиница, цифры и подчёркивание"
+            )
+        return v.lower()
+
+
+class ChannelOut(BaseModel):
+    id: int
+    title: str
+    username: str | None
+    description: str | None
+    owner_id: int
+    is_recommended: bool
+    subscriber_count: int = 0
+    my_role: str | None = None  # роль текущего пользователя, если он подписан
+
+    class Config:
+        from_attributes = True
+
+
+# ---------- Сообщения ----------
+
+class MessageOut(BaseModel):
+    id: int
+    chat_type: str
+    chat_id: int
+    sender_id: int
+    sender_username: str
+    text: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ConversationOut(BaseModel):
+    """Одна строка в списке 'Чаты': собеседник + последнее сообщение."""
+    peer: UserOut
+    last_message: MessageOut
+
+
+class WSIncoming(BaseModel):
+    """Формат сообщения, которое клиент шлёт в WebSocket."""
+    chat_type: str  # "direct" | "group" | "channel"
+    text: str = Field(min_length=1, max_length=4096)
+    to_username: str | None = None  # для chat_type="direct"
+    group_id: int | None = None      # для chat_type="group"
+    channel_id: int | None = None    # для chat_type="channel"
+
+    @field_validator("chat_type")
+    @classmethod
+    def valid_chat_type(cls, v: str) -> str:
+        if v not in ("direct", "group", "channel"):
+            raise ValueError("chat_type должен быть direct, group или channel")
+        return v

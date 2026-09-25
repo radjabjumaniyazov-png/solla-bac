@@ -7,14 +7,14 @@ SECRET_KEY обязательно переопределить в .env в про
 import os
 from datetime import datetime, timedelta, timezone
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, WebSocket, WebSocketException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from . import models
-from .database import get_db
+from .database import SessionLocal, get_db
 
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-change-me-before-deploy")
 ALGORITHM = "HS256"
@@ -57,4 +57,34 @@ def get_current_user(
     user = db.get(models.User, int(user_id))
     if user is None:
         raise credentials_error
+    return user
+
+
+async def get_current_user_ws(websocket: WebSocket) -> models.User:
+    """
+    Аутентификация для WebSocket. Браузерный WebSocket API не умеет
+    отправлять произвольные заголовки при установке соединения (в отличие
+    от обычного fetch), поэтому токен передаётся как query-параметр:
+    ws://host/ws?token=<JWT>. Это стандартная практика для WS-аутентификации.
+    """
+    token = websocket.query_params.get("token")
+    if not token:
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        if user_id is None:
+            raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
+    except JWTError:
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
+
+    # get_db() — обычный generator-dependency для HTTP-запросов, для WS его
+    # неудобно переиспользовать через Depends, поэтому открываем сессию сами.
+    db = SessionLocal()
+    try:
+        user = db.get(models.User, int(user_id))
+    finally:
+        db.close()
+    if user is None:
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
     return user
